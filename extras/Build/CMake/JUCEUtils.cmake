@@ -1,12 +1,19 @@
 # ==============================================================================
 #
-#  This file is part of the JUCE 7 technical preview.
+#  This file is part of the JUCE library.
 #  Copyright (c) 2022 - Raw Material Software Limited
 #
-#  You may use this code under the terms of the GPL v3
-#  (see www.gnu.org/licenses).
+#  JUCE is an open source library subject to commercial or open-source
+#  licensing.
 #
-#  For the technical preview this file cannot be licensed commercially.
+#  By using JUCE, you agree to the terms of both the JUCE 7 End-User License
+#  Agreement and JUCE Privacy Policy.
+#
+#  End User License Agreement: www.juce.com/juce-7-licence
+#  Privacy Policy: www.juce.com/juce-privacy-policy
+#
+#  Or: You may also use this code under the terms of the GPL v3 (see
+#  www.gnu.org/licenses).
 #
 #  JUCE IS PROVIDED "AS IS" WITHOUT ANY WARRANTY, AND ALL WARRANTIES, WHETHER
 #  EXPRESSED OR IMPLIED, INCLUDING MERCHANTABILITY AND FITNESS FOR PURPOSE, ARE
@@ -1230,7 +1237,13 @@ function(_juce_configure_plugin_targets target)
         JucePlugin_AAXDisableBypass=$<BOOL:$<TARGET_PROPERTY:${target},JUCE_DISABLE_AAX_BYPASS>>
         JucePlugin_AAXDisableMultiMono=$<BOOL:$<TARGET_PROPERTY:${target},JUCE_DISABLE_AAX_MULTI_MONO>>
         JucePlugin_VSTNumMidiInputs=$<TARGET_PROPERTY:${target},JUCE_VST_NUM_MIDI_INS>
-        JucePlugin_VSTNumMidiOutputs=$<TARGET_PROPERTY:${target},JUCE_VST_NUM_MIDI_OUTS>)
+        JucePlugin_VSTNumMidiOutputs=$<TARGET_PROPERTY:${target},JUCE_VST_NUM_MIDI_OUTS>
+        JucePlugin_Enable_ARA=$<BOOL:$<TARGET_PROPERTY:${target},JUCE_IS_ARA_EFFECT>>
+        JucePlugin_ARAFactoryID=$<TARGET_PROPERTY:${target},JUCE_ARA_FACTORY_ID>
+        JucePlugin_ARADocumentArchiveID=$<TARGET_PROPERTY:${target},JUCE_ARA_DOCUMENT_ARCHIVE_ID>
+        JucePlugin_ARACompatibleArchiveIDs=$<TARGET_PROPERTY:${target},JUCE_ARA_COMPATIBLE_ARCHIVE_IDS>
+        JucePlugin_ARAContentTypes=$<TARGET_PROPERTY:${target},JUCE_ARA_ANALYSIS_TYPES>
+        JucePlugin_ARATransformationFlags=$<TARGET_PROPERTY:${target},JUCE_ARA_TRANSFORMATION_FLAGS>)
 
     set_target_properties(${target} PROPERTIES
         POSITION_INDEPENDENT_CODE TRUE
@@ -1511,6 +1524,84 @@ function(_juce_set_fallback_properties target)
     get_target_property(plugin_name ${target} JUCE_PLUGIN_NAME)
     string(MAKE_C_IDENTIFIER "${plugin_name}" plugin_name_sanitised)
     _juce_set_property_if_not_set(${target} LV2URI "${company_website}/plugins/${plugin_name_sanitised}")
+
+    # ARA configuration
+    # Analysis types
+    set(ara_analysis_type_strings
+        kARAContentTypeNotes
+        kARAContentTypeTempoEntries
+        kARAContentTypeBarSignatures
+        kARAContentTypeStaticTuning
+        kARAContentTypeKeySignatures
+        kARAContentTypeSheetChords)
+
+    get_target_property(actual_ara_analysis_types ${target} JUCE_ARA_ANALYSIS_TYPES)
+
+    set(ara_analysis_types_int "")
+
+    foreach(category_string IN LISTS actual_ara_analysis_types)
+        list(FIND ara_analysis_type_strings ${category_string} ara_index)
+
+        if(ara_index GREATER_EQUAL 0)
+            set(ara_analysis_types_bit "1 << ${ara_index}")
+
+            if(ara_analysis_types_int STREQUAL "")
+                set(ara_analysis_types_int 0)
+            endif()
+
+            math(EXPR ara_analysis_types_int "${ara_analysis_types_int} | (${ara_analysis_types_bit})")
+        endif()
+    endforeach()
+
+    if(NOT ara_analysis_types_int STREQUAL "")
+        set_target_properties(${target} PROPERTIES JUCE_ARA_ANALYSIS_TYPES ${ara_analysis_types_int})
+    endif()
+
+    _juce_set_property_if_not_set(${target} ARA_ANALYSIS_TYPES 0)
+
+    # Transformation flags
+    set(ara_transformation_flags_strings
+        kARAPlaybackTransformationNoChanges
+        kARAPlaybackTransformationTimestretch
+        kARAPlaybackTransformationTimestretchReflectingTempo
+        kARAPlaybackTransformationContentBasedFadeAtTail
+        kARAPlaybackTransformationContentBasedFadeAtHead)
+
+    set(default_ara_transformation_flags kARAPlaybackTransformationNoChanges)
+
+    _juce_set_property_if_not_set(${target} ARA_TRANSFORMATION_FLAGS ${default_ara_transformation_flags})
+
+    get_target_property(actual_ara_transformation_flags ${target} JUCE_ARA_TRANSFORMATION_FLAGS)
+
+    set(ara_transformation_flags_int "")
+
+    foreach(transformation_string IN LISTS actual_ara_transformation_flags)
+        list(FIND ara_transformation_flags_strings ${transformation_string} ara_transformation_index)
+
+        if(ara_transformation_index GREATER_EQUAL 0)
+            if(ara_transformation_index EQUAL 0)
+                set(ara_transformation_bit 0)
+            else()
+                set(ara_transformation_bit "1 << (${ara_transformation_index} - 1)")
+            endif()
+
+            if(ara_transformation_flags_int STREQUAL "")
+                set(ara_transformation_flags_int 0)
+            endif()
+
+            math(EXPR ara_transformation_flags_int "${ara_transformation_flags_int} | (${ara_transformation_bit})")
+        endif()
+    endforeach()
+
+    if(NOT ara_transformation_flags_int STREQUAL "")
+        set_target_properties(${target} PROPERTIES JUCE_ARA_TRANSFORMATION_FLAGS ${ara_transformation_flags_int})
+    endif()
+
+    _juce_set_property_if_not_set(${target} IS_ARA_EFFECT FALSE)
+    get_target_property(final_bundle_id ${target} JUCE_BUNDLE_ID)
+    _juce_set_property_if_not_set(${target} ARA_FACTORY_ID "\"${final_bundle_id}.arafactory.${final_version}\"")
+    _juce_set_property_if_not_set(${target} ARA_DOCUMENT_ARCHIVE_ID "\"${final_bundle_id}.aradocumentarchive.1\"")
+    _juce_set_property_if_not_set(${target} ARA_COMPATIBLE_ARCHIVE_IDS "\"\"")
 endfunction()
 
 # ==================================================================================================
@@ -1578,6 +1669,9 @@ function(_juce_initialise_target target)
         PLUGINHOST_AU                   # Set this true if you want to host AU plugins
         USE_LEGACY_COMPATIBILITY_PLUGIN_CODE
         LV2URI
+        IS_ARA_EFFECT
+        ARA_FACTORY_ID
+        ARA_DOCUMENT_ARCHIVE_ID
 
         VST_COPY_DIR
         VST3_COPY_DIR
@@ -1599,7 +1693,10 @@ function(_juce_initialise_target target)
         AAX_CATEGORY
         IPHONE_SCREEN_ORIENTATIONS      # iOS only
         IPAD_SCREEN_ORIENTATIONS        # iOS only
-        APP_GROUP_IDS)                  # iOS only
+        APP_GROUP_IDS                   # iOS only
+        ARA_COMPATIBLE_ARCHIVE_IDS
+        ARA_ANALYSIS_TYPES
+        ARA_TRANSFORMATION_FLAGS)
 
     cmake_parse_arguments(JUCE_ARG "" "${one_value_args}" "${multi_value_args}" ${ARGN})
 
@@ -1798,26 +1895,43 @@ function(juce_add_pip header)
     endif()
 
     if(pip_kind STREQUAL "AudioProcessor")
-        set(source_main "${JUCE_CMAKE_UTILS_DIR}/PIPAudioProcessor.cpp.in")
+        _juce_get_metadata("${metadata_dict}" documentControllerClass JUCE_PIP_DOCUMENTCONTROLLER_CLASS)
 
-        # We add AAX/VST2 targets too, if the user has set up those SDKs
+        if(JUCE_PIP_DOCUMENTCONTROLLER_CLASS)
+            if(NOT TARGET juce_ara_sdk)
+                message(WARNING
+                    "${header} specifies a documentControllerClass, but the ARA SDK could not be located. "
+                    "Use juce_set_ara_sdk_path to specify the ARA SDK location. "
+                    "This PIP will not be configured.")
+            endif()
 
-        set(extra_formats)
+            set(source_main "${JUCE_CMAKE_UTILS_DIR}/PIPAudioProcessorWithARA.cpp.in")
 
-        if(TARGET juce_aax_sdk)
-            list(APPEND extra_formats AAX)
+            juce_add_plugin(${JUCE_PIP_NAME}
+                FORMATS AU VST3
+                IS_ARA_EFFECT TRUE)
+        else()
+            set(source_main "${JUCE_CMAKE_UTILS_DIR}/PIPAudioProcessor.cpp.in")
+
+            # We add AAX/VST2 targets too, if the user has set up those SDKs
+
+            set(extra_formats)
+
+            if(TARGET juce_aax_sdk)
+                list(APPEND extra_formats AAX)
+            endif()
+
+            if(TARGET juce_vst2_sdk)
+                list(APPEND extra_formats VST)
+            endif()
+
+            # Standalone plugins might want to access the mic
+            list(APPEND extra_target_args MICROPHONE_PERMISSION_ENABLED TRUE)
+
+            juce_add_plugin(${JUCE_PIP_NAME}
+                FORMATS AU AUv3 LV2 Standalone Unity VST3 ${extra_formats}
+                ${extra_target_args})
         endif()
-
-        if(TARGET juce_vst2_sdk)
-            list(APPEND extra_formats VST)
-        endif()
-
-        # Standalone plugins might want to access the mic
-        list(APPEND extra_target_args MICROPHONE_PERMISSION_ENABLED TRUE)
-
-        juce_add_plugin(${JUCE_PIP_NAME}
-            FORMATS AU AUv3 LV2 Standalone Unity VST3 ${extra_formats}
-            ${extra_target_args})
     elseif(pip_kind STREQUAL "Component")
         set(source_main "${JUCE_CMAKE_UTILS_DIR}/PIPComponent.cpp.in")
         juce_add_gui_app(${JUCE_PIP_NAME} ${extra_target_args})
@@ -1967,6 +2081,22 @@ function(juce_set_vst3_sdk_path path)
     add_library(juce_vst3_sdk INTERFACE IMPORTED GLOBAL)
 
     target_include_directories(juce_vst3_sdk INTERFACE "${path}")
+endfunction()
+
+function(juce_set_ara_sdk_path path)
+    if(TARGET juce_ara_sdk)
+        message(FATAL_ERROR "juce_set_ara_sdk_path should only be called once")
+    endif()
+
+    _juce_make_absolute(path)
+
+    if(NOT EXISTS "${path}")
+        message(FATAL_ERROR "Could not find ARA SDK at the specified path: ${path}")
+    endif()
+
+    add_library(juce_ara_sdk INTERFACE IMPORTED GLOBAL)
+
+    target_include_directories(juce_ara_sdk INTERFACE "${path}")
 endfunction()
 
 # ==================================================================================================

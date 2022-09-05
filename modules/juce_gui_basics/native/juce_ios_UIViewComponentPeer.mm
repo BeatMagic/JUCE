@@ -1,13 +1,20 @@
 /*
   ==============================================================================
 
-   This file is part of the JUCE 7 technical preview.
+   This file is part of the JUCE library.
    Copyright (c) 2022 - Raw Material Software Limited
 
-   You may use this code under the terms of the GPL v3
-   (see www.gnu.org/licenses).
+   JUCE is an open source library subject to commercial or open-source
+   licensing.
 
-   For the technical preview this file cannot be licensed commercially.
+   By using JUCE, you agree to the terms of both the JUCE 7 End-User License
+   Agreement and JUCE Privacy Policy.
+
+   End User License Agreement: www.juce.com/juce-7-licence
+   Privacy Policy: www.juce.com/juce-privacy-policy
+
+   Or: You may also use this code under the terms of the GPL v3 (see
+   www.gnu.org/licenses).
 
    JUCE IS PROVIDED "AS IS" WITHOUT ANY WARRANTY, AND ALL WARRANTIES, WHETHER
    EXPRESSED OR IMPLIED, INCLUDING MERCHANTABILITY AND FITNESS FOR PURPOSE, ARE
@@ -206,7 +213,6 @@ struct UIViewPeerControllerReceiver
 };
 
 class UIViewComponentPeer  : public ComponentPeer,
-                             private FocusChangeListener,
                              private UIViewPeerControllerReceiver
 {
 public:
@@ -257,10 +263,10 @@ public:
     bool isFocused() const override;
     void grabFocus() override;
     void textInputRequired (Point<int>, TextInputTarget&) override;
+    void dismissPendingTextInput() override;
 
     BOOL textViewReplaceCharacters (Range<int>, const String&);
-    void updateHiddenTextContent (TextInputTarget*);
-    void globalFocusChanged (Component*) override;
+    void updateHiddenTextContent (TextInputTarget&);
 
     void updateScreenBounds();
 
@@ -747,8 +753,6 @@ UIViewComponentPeer::UIViewComponentPeer (Component& comp, int windowStyleFlags,
 
     setTitle (component.getName());
     setVisible (component.isVisible());
-
-    Desktop::getInstance().addFocusChangeListener (this);
 }
 
 static UIViewComponentPeer* currentlyFocusedPeer = nullptr;
@@ -759,7 +763,6 @@ UIViewComponentPeer::~UIViewComponentPeer()
         currentlyFocusedPeer = nullptr;
 
     currentTouches.deleteAllTouchesForPeer (this);
-    Desktop::getInstance().removeFocusChangeListener (this);
 
     view->owner = nullptr;
     [view removeFromSuperview];
@@ -1123,8 +1126,18 @@ void UIViewComponentPeer::grabFocus()
     }
 }
 
-void UIViewComponentPeer::textInputRequired (Point<int>, TextInputTarget&)
+void UIViewComponentPeer::textInputRequired (Point<int> pos, TextInputTarget& target)
 {
+    view->hiddenTextView.frame = CGRectMake (pos.x, pos.y, 0, 0);
+
+    updateHiddenTextContent (target);
+    [view->hiddenTextView becomeFirstResponder];
+}
+
+void UIViewComponentPeer::dismissPendingTextInput()
+{
+    closeInputMethodContext();
+    [view->hiddenTextView resignFirstResponder];
 }
 
 static UIKeyboardType getUIKeyboardType (TextInputTarget::VirtualKeyboardType type) noexcept
@@ -1143,11 +1156,11 @@ static UIKeyboardType getUIKeyboardType (TextInputTarget::VirtualKeyboardType ty
     return UIKeyboardTypeDefault;
 }
 
-void UIViewComponentPeer::updateHiddenTextContent (TextInputTarget* target)
+void UIViewComponentPeer::updateHiddenTextContent (TextInputTarget& target)
 {
-    view->hiddenTextView.keyboardType = getUIKeyboardType (target->getKeyboardType());
-    view->hiddenTextView.text = juceStringToNS (target->getTextInRange (Range<int> (0, target->getHighlightedRegion().getStart())));
-    view->hiddenTextView.selectedRange = NSMakeRange ((NSUInteger) target->getHighlightedRegion().getStart(), 0);
+    view->hiddenTextView.keyboardType = getUIKeyboardType (target.getKeyboardType());
+    view->hiddenTextView.text = juceStringToNS (target.getTextInRange (Range<int> (0, target.getHighlightedRegion().getStart())));
+    view->hiddenTextView.selectedRange = NSMakeRange ((NSUInteger) target.getHighlightedRegion().getStart(), 0);
 }
 
 BOOL UIViewComponentPeer::textViewReplaceCharacters (Range<int> range, const String& text)
@@ -1168,29 +1181,10 @@ BOOL UIViewComponentPeer::textViewReplaceCharacters (Range<int> range, const Str
             target->insertTextAtCaret (text);
 
         if (deletionChecker != nullptr)
-            updateHiddenTextContent (target);
+            updateHiddenTextContent (*target);
     }
 
     return NO;
-}
-
-void UIViewComponentPeer::globalFocusChanged (Component*)
-{
-    if (auto* target = findCurrentTextInputTarget())
-    {
-        if (auto* comp = dynamic_cast<Component*> (target))
-        {
-            auto pos = component.getLocalPoint (comp, Point<int>());
-            view->hiddenTextView.frame = CGRectMake (pos.x, pos.y, 0, 0);
-
-            updateHiddenTextContent (target);
-            [view->hiddenTextView becomeFirstResponder];
-        }
-    }
-    else
-    {
-        [view->hiddenTextView resignFirstResponder];
-    }
 }
 
 //==============================================================================

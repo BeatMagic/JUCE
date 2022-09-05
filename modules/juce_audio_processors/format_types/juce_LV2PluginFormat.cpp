@@ -1,13 +1,20 @@
 /*
   ==============================================================================
 
-   This file is part of the JUCE 7 technical preview.
+   This file is part of the JUCE library.
    Copyright (c) 2022 - Raw Material Software Limited
 
-   You may use this code under the terms of the GPL v3
-   (see www.gnu.org/licenses).
+   JUCE is an open source library subject to commercial or open-source
+   licensing.
 
-   For the technical preview this file cannot be licensed commercially.
+   By using JUCE, you agree to the terms of both the JUCE 7 End-User License
+   Agreement and JUCE Privacy Policy.
+
+   End User License Agreement: www.juce.com/juce-7-licence
+   Privacy Policy: www.juce.com/juce-privacy-policy
+
+   Or: You may also use this code under the terms of the GPL v3 (see
+   www.gnu.org/licenses).
 
    JUCE IS PROVIDED "AS IS" WITHOUT ANY WARRANTY, AND ALL WARRANTIES, WHETHER
    EXPRESSED OR IMPLIED, INCLUDING MERCHANTABILITY AND FITNESS FOR PURPOSE, ARE
@@ -651,7 +658,7 @@ public:
 
         const auto index = strings.size();
         indices.insert (it, index);
-        strings.emplace_back (uri);
+        strings.push_back (uriString);
         return static_cast<LV2_URID> (index + 1);
     }
 
@@ -717,6 +724,7 @@ struct UsefulUrids
     X (LV2_TIME__beatsPerMinute)
     X (LV2_TIME__frame)
     X (LV2_TIME__speed)
+    X (LV2_TIME__bar)
     X (LV2_UI__floatProtocol)
     X (LV2_UNITS__beat)
     X (LV2_UNITS__frame)
@@ -1681,7 +1689,7 @@ private:
 template <size_t Alignment>
 static SingleSizeAlignedStorage<Alignment> grow (SingleSizeAlignedStorage<Alignment> storage, size_t size)
 {
-    if (storage.size() <= size)
+    if (size <= storage.size())
         return storage;
 
     SingleSizeAlignedStorage<Alignment> newStorage { jmax (size, (storage.size() * 3) / 2) };
@@ -1689,11 +1697,13 @@ static SingleSizeAlignedStorage<Alignment> grow (SingleSizeAlignedStorage<Alignm
     return newStorage;
 }
 
+enum class SupportsTime { no, yes };
+
 class AtomPort
 {
 public:
-    AtomPort (PortHeader h, size_t bytes, SymbolMap& map)
-        : header (h), contents (bytes), forge (map.getMapFeature()) {}
+    AtomPort (PortHeader h, size_t bytes, SymbolMap& map, SupportsTime supportsTime)
+        : header (h), contents (bytes), forge (map.getMapFeature()), time (supportsTime) {}
 
     PortHeader header;
 
@@ -1759,6 +1769,8 @@ public:
           lv2_shared::AtomForge& getForge()       { return forge; }
     const lv2_shared::AtomForge& getForge() const { return forge; }
 
+    bool getSupportsTime() const { return time == SupportsTime::yes; }
+
 private:
     template <typename This>
     static auto data (This& t) -> decltype (t.data())
@@ -1770,111 +1782,8 @@ private:
     SingleSizeAlignedStorage<8> contents;
     lv2_shared::AtomForge forge;
     LV2_Atom_Forge_Frame frame;
+    SupportsTime time = SupportsTime::no;
 };
-
-template <typename Value>
-struct ParseResult
-{
-    Value value;
-    bool successful;
-};
-
-class Ports
-{
-public:
-    static constexpr auto sequenceSize = 8192;
-
-    template <typename Callback>
-    void forEachPort (Callback&& callback) const
-    {
-        for (const auto& port : controlPorts)
-            callback (port.header);
-
-        for (const auto& port : cvPorts)
-            callback (port.header);
-
-        for (const auto& port : audioPorts)
-            callback (port.header);
-
-        for (const auto& port : atomPorts)
-            callback (port.header);
-    }
-
-    auto getControlPorts()       { return makeSimpleSpan (controlPorts); }
-    auto getControlPorts() const { return makeSimpleSpan (controlPorts); }
-    auto getCvPorts()            { return makeSimpleSpan (cvPorts); }
-    auto getCvPorts()      const { return makeSimpleSpan (cvPorts); }
-    auto getAudioPorts()         { return makeSimpleSpan (audioPorts); }
-    auto getAudioPorts()   const { return makeSimpleSpan (audioPorts); }
-    auto getAtomPorts()          { return makeSimpleSpan (atomPorts); }
-    auto getAtomPorts()    const { return makeSimpleSpan (atomPorts); }
-
-private:
-    friend ParseResult<Ports> getPorts (const UsefulUris& uris, const Plugin& plugin, SymbolMap& symap);
-
-    std::vector<ControlPort> controlPorts;
-    std::vector<CVPort> cvPorts;
-    std::vector<AudioPort> audioPorts;
-    std::vector<AtomPort> atomPorts;
-};
-
-ParseResult<Ports> getPorts (const UsefulUris& uris, const Plugin& plugin, SymbolMap& symap)
-{
-    Ports value;
-    bool successful = true;
-
-    const auto numPorts = plugin.getNumPorts();
-
-    for (uint32_t i = 0; i != numPorts; ++i)
-    {
-        const auto port = plugin.getPortByIndex (i);
-
-        const PortHeader header { String::fromUTF8 (port.getName().getTyped()),
-                                  String::fromUTF8 (port.getSymbol().getTyped()),
-                                  i,
-                                  port.getDirection (uris) };
-
-        switch (port.getKind (uris))
-        {
-            case Port::Kind::control:
-            {
-                value.controlPorts.push_back ({ header, ParameterInfo::getInfoForPort (uris, port) });
-                break;
-            }
-
-            case Port::Kind::cv:
-                value.cvPorts.push_back ({ header });
-                break;
-
-            case Port::Kind::audio:
-            {
-                value.audioPorts.push_back ({ header });
-                break;
-            }
-
-            case Port::Kind::atom:
-            {
-                value.atomPorts.push_back ({ header, (size_t) Ports::sequenceSize, symap });
-                break;
-            }
-
-            case Port::Kind::unknown:
-                successful = false;
-                break;
-        }
-    }
-
-    for (auto& atomPort : value.atomPorts)
-    {
-        const auto port    = plugin.getPortByIndex (atomPort.header.index);
-        const auto minSize = port.get (uris.mLV2_RESIZE_PORT__minimumSize.get());
-
-        if (minSize != nullptr)
-            atomPort.ensureSizeInBytes ((size_t) lilv_node_as_int (minSize.get()));
-    }
-
-    return { std::move (value), successful };
-}
 
 class Plugins
 {
@@ -1972,6 +1881,106 @@ private:
     };
 
     std::unique_ptr<LilvWorld, Free> world;
+};
+
+class Ports
+{
+public:
+    static constexpr auto sequenceSize = 8192;
+
+    template <typename Callback>
+    void forEachPort (Callback&& callback) const
+    {
+        for (const auto& port : controlPorts)
+            callback (port.header);
+
+        for (const auto& port : cvPorts)
+            callback (port.header);
+
+        for (const auto& port : audioPorts)
+            callback (port.header);
+
+        for (const auto& port : atomPorts)
+            callback (port.header);
+    }
+
+    auto getControlPorts()       { return makeSimpleSpan (controlPorts); }
+    auto getControlPorts() const { return makeSimpleSpan (controlPorts); }
+    auto getCvPorts()            { return makeSimpleSpan (cvPorts); }
+    auto getCvPorts()      const { return makeSimpleSpan (cvPorts); }
+    auto getAudioPorts()         { return makeSimpleSpan (audioPorts); }
+    auto getAudioPorts()   const { return makeSimpleSpan (audioPorts); }
+    auto getAtomPorts()          { return makeSimpleSpan (atomPorts); }
+    auto getAtomPorts()    const { return makeSimpleSpan (atomPorts); }
+
+    static Optional<Ports> getPorts (World& world, const UsefulUris& uris, const Plugin& plugin, SymbolMap& symap)
+    {
+        Ports value;
+        bool successful = true;
+
+        const auto numPorts = plugin.getNumPorts();
+        const auto timeNode = world.newUri (LV2_TIME__Position);
+
+        for (uint32_t i = 0; i != numPorts; ++i)
+        {
+            const auto port = plugin.getPortByIndex (i);
+
+            const PortHeader header { String::fromUTF8 (port.getName().getTyped()),
+                                      String::fromUTF8 (port.getSymbol().getTyped()),
+                                      i,
+                                      port.getDirection (uris) };
+
+            switch (port.getKind (uris))
+            {
+                case Port::Kind::control:
+                {
+                    value.controlPorts.push_back ({ header, ParameterInfo::getInfoForPort (uris, port) });
+                    break;
+                }
+
+                case Port::Kind::cv:
+                    value.cvPorts.push_back ({ header });
+                    break;
+
+                case Port::Kind::audio:
+                {
+                    value.audioPorts.push_back ({ header });
+                    break;
+                }
+
+                case Port::Kind::atom:
+                {
+                    const auto supportsTime = port.supportsEvent (timeNode.get());
+                    value.atomPorts.push_back ({ header,
+                                                 (size_t) Ports::sequenceSize,
+                                                 symap,
+                                                 supportsTime ? SupportsTime::yes : SupportsTime::no });
+                    break;
+                }
+
+                case Port::Kind::unknown:
+                    successful = false;
+                    break;
+            }
+        }
+
+        for (auto& atomPort : value.atomPorts)
+        {
+            const auto port    = plugin.getPortByIndex (atomPort.header.index);
+            const auto minSize = port.get (uris.mLV2_RESIZE_PORT__minimumSize.get());
+
+            if (minSize != nullptr)
+                atomPort.ensureSizeInBytes ((size_t) lilv_node_as_int (minSize.get()));
+        }
+
+        return successful ? makeOptional (std::move (value)) : nullopt;
+    }
+
+private:
+    std::vector<ControlPort> controlPorts;
+    std::vector<CVPort> cvPorts;
+    std::vector<AudioPort> audioPorts;
+    std::vector<AtomPort> atomPorts;
 };
 
 class InstanceWithSupports : private FeaturesDataListener,
@@ -2341,8 +2350,7 @@ private:
     JUCE_LEAK_DETECTOR (UiDescriptor)
 };
 
-enum class UpdateUi         { no, yes };
-enum class UpdateProcessor  { no, yes };
+enum class Update { no, yes };
 
 /*  A bit like the FlaggedFloatCache used by the VST3 host/client.
 
@@ -2365,12 +2373,12 @@ public:
 
     size_t size() const noexcept { return values.size(); }
 
-    void set (size_t index, float value, UpdateUi updateUi, UpdateProcessor updateProcessor)
+    void set (size_t index, float value, Update update)
     {
         jassert (index < size());
         values[index].store (value, std::memory_order_relaxed);
-        needsUiUpdate       .set (index, updateUi        == UpdateUi::yes        ? 1 : 0);
-        needsProcessorUpdate.set (index, updateProcessor == UpdateProcessor::yes ? 1 : 0);
+        needsUiUpdate       .set (index, update == Update::yes ? 1 : 0);
+        needsProcessorUpdate.set (index, update == Update::yes ? 1 : 0);
     }
 
     float get (size_t index) const noexcept
@@ -2430,18 +2438,18 @@ public:
 
     void setValue (float f) override
     {
-        cache.set ((size_t) getParameterIndex(), range.convertFrom0to1 (f), UpdateUi::yes, UpdateProcessor::yes);
+        cache.set ((size_t) getParameterIndex(), range.convertFrom0to1 (f), Update::yes);
     }
 
-    void setDenormalisedValueFromUi (float denormalised)
+    void setDenormalisedValue (float denormalised)
     {
-        cache.set ((size_t) getParameterIndex(), denormalised, UpdateUi::no, UpdateProcessor::yes);
+        cache.set ((size_t) getParameterIndex(), denormalised, Update::yes);
         sendValueChangedMessageToListeners (range.convertTo0to1 (denormalised));
     }
 
     void setDenormalisedValueWithoutTriggeringUpdate (float denormalised)
     {
-        cache.set ((size_t) getParameterIndex(), denormalised, UpdateUi::no, UpdateProcessor::no);
+        cache.set ((size_t) getParameterIndex(), denormalised, Update::no);
         sendValueChangedMessageToListeners (range.convertTo0to1 (denormalised));
     }
 
@@ -3170,14 +3178,6 @@ private:
     }
 
     float getEffectiveScale() const     { return nativeScaleFactor * userScaleFactor; }
-
-    float getTopLevelDesktopScale() const
-    {
-        if (auto* comp = getTopLevelComponent())
-            return comp->getDesktopScaleFactor();
-
-        return 1.0f;
-    }
 
     // If possible, try to keep platform-specific handing restricted to the implementation of
     // ViewComponent. Keep the interface of ViewComponent consistent on all platforms.
@@ -4110,11 +4110,14 @@ static SupportedParameter getInfoForPatchParameter (World& worldIn,
             jassertfalse; // A ScalePoint must have both a rdfs:label and a rdf:value
     }
 
+    const auto minimum = getValue (LV2_CORE__minimum, 0.0f);
+    const auto maximum = getValue (LV2_CORE__maximum, 1.0f);
+
     return { { std::move (parsedScalePoints),
                "des:" + String::fromUTF8 (property.getTyped()),
-               getValue (LV2_CORE__default, 0.0f),
-               getValue (LV2_CORE__minimum, 0.0f),
-               getValue (LV2_CORE__maximum, 1.0f),
+               getValue (LV2_CORE__default, (minimum + maximum) * 0.5f),
+               minimum,
+               maximum,
                typeUrid == urids.mLV2_ATOM__Bool || hasPortProperty (LV2_CORE__toggled),
                typeUrid == urids.mLV2_ATOM__Int || typeUrid == urids.mLV2_ATOM__Long,
                hasPortProperty (LV2_CORE__enumeration) },
@@ -4752,6 +4755,72 @@ private:
             instance->instance.connectPort (port.header.index, port.data());
     }
 
+    void writeTimeInfoToPort (AtomPort& port)
+    {
+        if (port.header.direction != Port::Direction::input || ! port.getSupportsTime())
+            return;
+
+        auto* forge = port.getForge().get();
+        auto* playhead = getPlayHead();
+
+        if (playhead == nullptr)
+            return;
+
+        // Write timing info to the control port
+        const auto info = playhead->getPosition();
+
+        if (! info.hasValue())
+            return;
+
+        const auto& urids = instance->urids;
+
+        lv2_atom_forge_frame_time (forge, 0);
+
+        lv2_shared::ObjectFrame object { forge, (uint32_t) 0, urids.mLV2_TIME__Position };
+
+        lv2_atom_forge_key (forge, urids.mLV2_TIME__speed);
+        lv2_atom_forge_float (forge, info->getIsPlaying() ? 1.0f : 0.0f);
+
+        if (const auto samples = info->getTimeInSamples())
+        {
+            lv2_atom_forge_key (forge, urids.mLV2_TIME__frame);
+            lv2_atom_forge_long (forge, *samples);
+        }
+
+        if (const auto bar = info->getBarCount())
+        {
+            lv2_atom_forge_key (forge, urids.mLV2_TIME__bar);
+            lv2_atom_forge_long (forge, *bar);
+        }
+
+        if (const auto beat = info->getPpqPosition())
+        {
+            if (const auto barStart = info->getPpqPositionOfLastBarStart())
+            {
+                lv2_atom_forge_key (forge, urids.mLV2_TIME__barBeat);
+                lv2_atom_forge_float (forge, (float) (*beat - *barStart));
+            }
+
+            lv2_atom_forge_key (forge, urids.mLV2_TIME__beat);
+            lv2_atom_forge_double (forge, *beat);
+        }
+
+        if (const auto sig = info->getTimeSignature())
+        {
+            lv2_atom_forge_key (forge, urids.mLV2_TIME__beatUnit);
+            lv2_atom_forge_int (forge, sig->denominator);
+
+            lv2_atom_forge_key (forge, urids.mLV2_TIME__beatsPerBar);
+            lv2_atom_forge_float (forge, (float) sig->numerator);
+        }
+
+        if (const auto bpm = info->getBpm())
+        {
+            lv2_atom_forge_key (forge, urids.mLV2_TIME__beatsPerMinute);
+            lv2_atom_forge_float (forge, (float) *bpm);
+        }
+    }
+
     void preparePortsForRun (AudioBuffer<float>& audio, MidiBuffer& midiBuffer)
     {
         connectPorts (audio);
@@ -4774,49 +4843,13 @@ private:
             }
         }
 
-        auto* forge = controlPort != nullptr ? controlPort->getForge().get()
-                                             : nullptr;
+        for (auto& port : instance->ports.getAtomPorts())
+            writeTimeInfoToPort (port);
 
-        if (forge != nullptr)
-        {
-            // Write timing info to the control port
-            if (auto* playhead = getPlayHead())
-            {
-                AudioPlayHead::CurrentPositionInfo info;
+        const auto controlPortForge = controlPort != nullptr ? controlPort->getForge().get()
+                                                             : nullptr;
 
-                if (playhead->getCurrentPosition (info))
-                {
-                    const auto& urids = instance->urids;
-
-                    lv2_atom_forge_frame_time (forge, 0);
-
-                    lv2_shared::ObjectFrame object { forge, (uint32_t) 0, urids.mLV2_TIME__Position };
-
-                    lv2_atom_forge_key (forge, urids.mLV2_TIME__frame);
-                    lv2_atom_forge_long (forge, info.timeInSamples);
-
-                    lv2_atom_forge_key (forge, urids.mLV2_TIME__speed);
-                    lv2_atom_forge_float (forge, info.isPlaying ? 1.0f : 0.0f);
-
-                    lv2_atom_forge_key (forge, urids.mLV2_TIME__barBeat);
-                    lv2_atom_forge_float (forge, (float) (info.ppqPosition - info.ppqPositionOfLastBarStart));
-
-                    lv2_atom_forge_key (forge, urids.mLV2_TIME__beat);
-                    lv2_atom_forge_double (forge, info.ppqPosition);
-
-                    lv2_atom_forge_key (forge, urids.mLV2_TIME__beatUnit);
-                    lv2_atom_forge_int (forge, info.timeSigDenominator);
-
-                    lv2_atom_forge_key (forge, urids.mLV2_TIME__beatsPerBar);
-                    lv2_atom_forge_float (forge, (float) info.timeSigNumerator);
-
-                    lv2_atom_forge_key (forge, urids.mLV2_TIME__beatsPerMinute);
-                    lv2_atom_forge_float (forge, (float) info.bpm);
-                }
-            }
-        }
-
-        parameterValues.postChangedParametersToProcessor (getParameterWriterUrids(), forge);
+        parameterValues.postChangedParametersToProcessor (getParameterWriterUrids(), controlPortForge);
 
         instance->uiToProcessor.readAllAndClear ([this] (MessageHeader header, uint32_t size, const void* buffer)
         {
@@ -4854,7 +4887,7 @@ private:
 
             if (auto* param = parameterValues.getParamByPortIndex (header.portIndex))
             {
-                param->setDenormalisedValueFromUi (value);
+                param->setDenormalisedValue (value);
             }
             else if (auto* port = controlPortStructure.getControlPortByIndex (header.portIndex))
             {
@@ -5363,15 +5396,15 @@ public:
             return lv2_host::PluginState { lilv_state_new_from_world (world->get(), &map, plugin.getUri().get()) };
         }();
 
-        auto ports = lv2_host::getPorts (uris, plugin, *symap);
+        auto ports = lv2_host::Ports::getPorts (*world, uris, plugin, *symap);
 
-        if (! ports.successful)
+        if (! ports.hasValue())
             return callback (nullptr, "Plugin has ports of an unsupported type");
 
         auto instance = std::make_unique<lv2_host::InstanceWithSupports> (*world,
                                                                           std::move (symap),
                                                                           plugin,
-                                                                          std::move (ports.value),
+                                                                          std::move (*ports),
                                                                           (int32_t) initialBufferSize,
                                                                           initialSampleRate);
 

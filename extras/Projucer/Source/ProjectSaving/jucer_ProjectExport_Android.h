@@ -1,13 +1,20 @@
 /*
   ==============================================================================
 
-   This file is part of the JUCE 7 technical preview.
+   This file is part of the JUCE library.
    Copyright (c) 2022 - Raw Material Software Limited
 
-   You may use this code under the terms of the GPL v3
-   (see www.gnu.org/licenses).
+   JUCE is an open source library subject to commercial or open-source
+   licensing.
 
-   For the technical preview this file cannot be licensed commercially.
+   By using JUCE, you agree to the terms of both the JUCE 7 End-User License
+   Agreement and JUCE Privacy Policy.
+
+   End User License Agreement: www.juce.com/juce-7-licence
+   Privacy Policy: www.juce.com/juce-privacy-policy
+
+   Or: You may also use this code under the terms of the GPL v3 (see
+   www.gnu.org/licenses).
 
    JUCE IS PROVIDED "AS IS" WITHOUT ANY WARRANTY, AND ALL WARRANTIES, WHETHER
    EXPRESSED OR IMPLIED, INCLUDING MERCHANTABILITY AND FITNESS FOR PURPOSE, ARE
@@ -29,7 +36,6 @@ public:
     bool isCodeBlocks() const override           { return false; }
     bool isMakefile() const override             { return false; }
     bool isAndroidStudio() const override        { return true;  }
-    bool isCLion() const override                { return false; }
 
     bool isAndroid() const override              { return true; }
     bool isWindows() const override              { return false; }
@@ -512,9 +518,12 @@ private:
 
             if (excludeFromBuild.size() > 0)
             {
-                for (auto& exclude : excludeFromBuild)
-                    mo << "set_source_files_properties(\"" << exclude.toUnixStyle() << "\" PROPERTIES HEADER_FILE_ONLY TRUE)" << newLine;
+                mo << "set_source_files_properties(" << newLine;
 
+                for (auto& exclude : excludeFromBuild)
+                    mo << "    \"" << exclude.toUnixStyle() << '"' << newLine;
+
+                mo << "    PROPERTIES HEADER_FILE_ONLY TRUE)" << newLine;
                 mo << newLine;
             }
 
@@ -857,7 +866,7 @@ private:
             mo << "        implementation files('libs/" << File (d).getFileName() << "')" << newLine;
 
         if (isInAppBillingEnabled())
-            mo << "        implementation 'com.android.billingclient:billing:2.1.0'" << newLine;
+            mo << "        implementation 'com.android.billingclient:billing:5.0.0'" << newLine;
 
         if (areRemoteNotificationsEnabled())
         {
@@ -1663,7 +1672,15 @@ private:
         }
 
         for (int i = permissions.size(); --i >= 0;)
-            manifest.createNewChildElement ("uses-permission")->setAttribute ("android:name", permissions[i]);
+        {
+            const auto permission = permissions[i];
+            auto* usesPermission = manifest.createNewChildElement ("uses-permission");
+            usesPermission->setAttribute ("android:name", permission);
+
+            // This permission only has an effect on SDK version 28 and lower
+            if (permission == "android.permission.WRITE_EXTERNAL_STORAGE")
+                usesPermission->setAttribute ("android:maxSdkVersion", "28");
+        }
     }
 
     void createOpenGlFeatureElement (XmlElement& manifest) const
