@@ -135,7 +135,7 @@
         comes with the SDK. (Only about a handful of the SDK header files are actually
         needed - so to simplify things, you could just copy these into your JUCE directory).
   */
-  #include <iasiodrv.h>
+  #include <asio/iasiodrv.h>
   #include "native/juce_win32_ASIO.cpp"
  #endif
 
