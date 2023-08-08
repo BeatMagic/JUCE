@@ -22,7 +22,7 @@
 # ==============================================================================
 
 juce_add_modules(
-#    INSTALL_PATH "include/JUCE-${JUCE_VERSION}/modules"
+    # INSTALL_PATH "include/JUCE-${JUCE_VERSION}/modules"
     ALIAS_NAMESPACE juce
     juce_analytics
     juce_audio_basics
@@ -44,5 +44,3 @@ juce_add_modules(
     juce_osc
     juce_product_unlocking
     juce_video)
-
-#add_subdirectory(juce_audio_plugin_client)
